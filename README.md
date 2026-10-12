@@ -62,9 +62,10 @@ reims-util opencore -o OpenCore.qcow2
 
 This writes a 128 MiB disk image with OpenCore 1.0.8 on its EFI partition: qcow2 for a `.qcow2`
 name, and a raw disk image for anything else (`.img`). Beside it go `OVMF_CODE.fd` and
-`OVMF_VARS.fd`, with OVMF's licenses. Both are downloaded from pinned releases (OpenCore's from
-GitHub, OVMF from Arch Linux's `edk2-ovmf` package), checked against the hashes reims-util knows,
-and cached in `~/.cache/reims-util`, so they're only downloaded once.
+`OVMF_VARS.fd`, with OVMF's licenses. What goes in them is downloaded from pinned sources
+(OpenCore's release and a commit of its picker icons and boot chime, OcBinaryData, from GitHub;
+OVMF from Arch Linux's `edk2-ovmf` package), checked against the hashes reims-util knows, and
+cached in `~/.cache/reims-util`, so it's only downloaded once.
 
 Each image gets a Mac identity of its own: a serial number, logic board serial (MLB), system UUID
 and ROM, which it prints when it's done. Keep them if you'll want the same identity in another
@@ -82,6 +83,11 @@ What's in the image, and why:
   with its own driver.
 - **The drivers a VM boots with**: OpenRuntime, OpenHfsPlus (recovery images and installers are
   HFS+), OpenPartitionDxe (for older recovery images) and ResetNvramEntry.
+- **The graphical picker**, OpenCanopy, with the GoldenGate icons. Pick with the arrow keys, Tab
+  and Enter; it has no mouse pointer in a VM. `--text-picker` gives OpenCore's text list instead.
+- **The boot chime**, which plays on the VM's Intel HD Audio controller when it has one (QEMU's
+  `ich9-intel-hda` with an `hda-output` codec). Turning off "Play sound on startup" in macOS's
+  Sound settings silences it.
 - **One ACPI table**, with the `EC` and `USBX` devices macOS looks for.
 - **The CPU reported as a Skylake-SP**, which every macOS from 10.13 to 26 knows, whatever CPU
   model the VM has. `--no-cpuid-spoof` turns that off.
@@ -166,4 +172,5 @@ reims-util --json online-installer tahoe -o ~/vms/mac
 
 reims-util is licensed under GPL-2.0-or-later OR LGPL-3.0-or-later; see [LICENSE](LICENSE). The
 serial number tables come from OpenCorePkg's macserial, under its BSD-3-Clause license.
-OpenCore and OVMF, which reims-util downloads, keep their own licenses.
+OpenCore, its picker icons and chime (OcBinaryData) and OVMF, which reims-util downloads, keep
+their own licenses.

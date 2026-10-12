@@ -101,6 +101,9 @@ pub struct OpencoreArgs {
     /// Let macOS see that it runs in a VM (iCloud and the App Store then refuse to sign in)
     #[arg(long)]
     pub show_vm: bool,
+    /// Use OpenCore's text picker instead of the graphical one
+    #[arg(long)]
+    pub text_picker: bool,
     /// Write no OVMF files
     #[arg(long)]
     pub no_ovmf: bool,
@@ -334,6 +337,7 @@ pub fn opencore_options(a: &OpencoreArgs) -> Result<opencore::Options> {
             sip: !a.disable_sip,
             cpuid_spoof: !a.no_cpuid_spoof,
             hide_vm: !a.show_vm,
+            graphical_picker: !a.text_picker,
         },
         ovmf_dir,
     })

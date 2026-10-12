@@ -7,6 +7,10 @@
 //! power management, USB port maps, Intel graphics) are left out:
 //! - the drivers a VM boots with: OpenRuntime, OpenHfsPlus (recovery images and installers are
 //!   HFS+), OpenPartitionDxe (older recovery images' Apple partition maps) and ResetNvramEntry;
+//! - the graphical picker, OpenCanopy, with the `Acidanthera\GoldenGate` icons (or the text
+//!   picker, when asked for);
+//! - the boot chime, which AudioDxe plays on the first Intel HDA controller and codec it finds,
+//!   when the VM has one, unless macOS's "Play sound on startup" is off (`StartupMute`);
 //! - no kexts: QEMU's `isa-applesmc` is the SMC, and the GPU is reims-vgpu's, which macOS drives
 //!   with its own driver;
 //! - one ACPI table, the `EC` and `USBX` devices macOS looks for (acpi.rs);
@@ -22,13 +26,22 @@ use super::smbios::Smbios;
 use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
 
+/// The graphical picker's icon set, under `EFI\OC\Resources\Image`.
+pub const PICKER_VARIANT: &str = "Acidanthera\\GoldenGate";
+
 /// The drivers the image carries and loads, in order.
-pub const DRIVERS: &[&str] = &[
-    "OpenRuntime.efi",
-    "OpenHfsPlus.efi",
-    "OpenPartitionDxe.efi",
-    "ResetNvramEntry.efi",
-];
+pub fn drivers(o: &Options) -> Vec<&'static str> {
+    let mut d = vec!["OpenRuntime.efi", "OpenHfsPlus.efi"];
+    if o.graphical_picker {
+        d.push("OpenCanopy.efi");
+    }
+    d.extend([
+        "AudioDxe.efi",
+        "OpenPartitionDxe.efi",
+        "ResetNvramEntry.efi",
+    ]);
+    d
+}
 
 /// Arguments for every boot: kernel symbols in panic logs, and no panics on a TLB shootdown or a
 /// timeout a vCPU took because the host descheduled it.
@@ -48,6 +61,8 @@ pub struct Options {
     pub sip: bool,
     pub cpuid_spoof: bool,
     pub hide_vm: bool,
+    /// OpenCanopy's graphical picker, or OpenCore's text one.
+    pub graphical_picker: bool,
 }
 
 pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
@@ -161,7 +176,13 @@ pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
     set(c, &["Kernel", "Quirks"], "SetApfsTrimTimeout", 0.into())?;
 
     set(c, &["Misc", "Boot"], "HideAuxiliary", false.into())?;
-    set(c, &["Misc", "Boot"], "PickerMode", "Builtin".into())?;
+    let mode = if o.graphical_picker {
+        "External"
+    } else {
+        "Builtin"
+    };
+    set(c, &["Misc", "Boot"], "PickerMode", mode.into())?;
+    set(c, &["Misc", "Boot"], "PickerVariant", PICKER_VARIANT.into())?;
     set(c, &["Misc", "Boot"], "PollAppleHotKeys", true.into())?;
     set(c, &["Misc", "Boot"], "ShowPicker", true.into())?;
     set(c, &["Misc", "Boot"], "Timeout", (o.timeout as i64).into())?;
@@ -210,13 +231,19 @@ pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
 
     set(c, &["UEFI", "APFS"], "MinDate", (-1i64).into())?;
     set(c, &["UEFI", "APFS"], "MinVersion", (-1i64).into())?;
+    // The chime: an empty device path is the first HDA controller and codec AudioDxe finds, and a
+    // mask of -1 every output of that codec. Auto stays silent when `StartupMute` is set.
+    set(c, &["UEFI", "Audio"], "AudioSupport", true.into())?;
+    set(c, &["UEFI", "Audio"], "AudioDevice", "".into())?;
+    set(c, &["UEFI", "Audio"], "AudioOutMask", (-1i64).into())?;
+    set(c, &["UEFI", "Audio"], "PlayChime", "Auto".into())?;
     set(c, &["UEFI", "Output"], "Resolution", "".into())?;
     let sample_drivers: Vec<Value> = match dict(c, &["UEFI"])?.get("Drivers") {
         Some(Value::Array(a)) => a.clone(),
         _ => bail!("Sample.plist has no UEFI > Drivers"),
     };
-    let mut drivers = Vec::new();
-    for name in DRIVERS {
+    let mut entries = Vec::new();
+    for name in drivers(o) {
         let mut e = sample_drivers
             .iter()
             .filter_map(Value::as_dictionary)
@@ -229,13 +256,13 @@ pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
                     .cloned()
             })
             .context("Sample.plist lists no drivers")?;
-        e.insert("Path".into(), (*name).into());
+        e.insert("Path".into(), name.into());
         e.insert("Arguments".into(), "".into());
         e.insert("Enabled".into(), true.into());
         e.insert("LoadEarly".into(), false.into());
-        drivers.push(Value::Dictionary(e));
+        entries.push(Value::Dictionary(e));
     }
-    set(c, &["UEFI"], "Drivers", Value::Array(drivers))?;
+    set(c, &["UEFI"], "Drivers", Value::Array(entries))?;
     set(c, &["UEFI"], "ReservedMemory", Value::Array(vec![]))?;
 
     let mut out = Vec::new();

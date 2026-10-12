@@ -270,6 +270,7 @@ impl App {
                     disable_sip: !form.toggle(4),
                     no_cpuid_spoof: false,
                     show_vm: !form.toggle(5),
+                    text_picker: !form.toggle(7),
                     no_ovmf: !form.toggle(3),
                     ovmf_dir: None,
                 };
@@ -656,6 +657,11 @@ fn opencore_form() -> Form {
                 help: "Show the kernel's messages while macOS boots, instead of the Apple logo."
                     .into(),
                 kind: Kind::Toggle(false),
+            },
+            Field {
+                label: "Graphical picker",
+                help: "OpenCore's boot picker with icons, or its text list when off.".into(),
+                kind: Kind::Toggle(true),
             },
         ],
     }
