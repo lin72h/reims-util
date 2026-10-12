@@ -1,0 +1,51 @@
+# reims-util: makes the OpenCore boot image and OVMF firmware an x86-64 macOS VM boots through,
+# and online and offline macOS installers from Apple's own files (README.md).
+[package]
+name = "reims-util"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+publish = false
+license = "GPL-2.0-or-later OR LGPL-3.0-or-later"
+description = "Make OpenCore boot images and macOS installers for x86-64 macOS VMs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
+crc32fast = "1.5.2"
+# The gzipped software update catalog (installer.rs).
+flate2 = "1.1.10"
+getrandom = "0.4.3"
+# The RSA check of a recovery image's chunklist signature (chunklist.rs).
+num-bigint = "0.5.1"
+plist = "1.10.1"
+# line_count: how many rows a wrapped summary takes in the scrollback (tui.rs). No default
+# features: their underline-color names the termwiz and termina backends, which Cargo.lock then
+# carries (with termwiz's old generic-array and psm) though nothing builds them.
+ratatui = { version = "0.30.2", default-features = false, features = [
+    "crossterm",
+    "layout-cache",
+    "unstable-rendered-line-info",
+] }
+# The OVMF package's zstd archive (ovmf.rs).
+ruzstd = "0.9.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha1 = "0.11.0"
+sha2 = "0.11.0"
+tar = "0.4.46"
+ureq = "3.4.2"
+# The OpenCore release (opencore/mod.rs): reading deflated entries only.
+zip = { version = "9.0.2", default-features = false, features = ["deflate-flate2"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+
+[profile.release]
+debug = "line-tables-only"
