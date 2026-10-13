@@ -11,8 +11,9 @@
 //!   picker, when asked for);
 //! - the boot chime, which AudioDxe plays on the first Intel HDA controller and codec it finds,
 //!   when the VM has one, unless macOS's "Play sound on startup" is off (`StartupMute`);
-//! - no kexts: QEMU's `isa-applesmc` is the SMC, and the GPU is reims-vgpu's, which macOS drives
-//!   with its own driver;
+//! - on macOS 26, two kexts: Lilu, and its plugin ReimsVgpu (kext/), which has macOS's own driver
+//!   for reims-vgpu's GPU negotiate the interface version arm64 guests use, and patches what the
+//!   x86-64 driver and its Metal plugin hardcode; no others, as QEMU's `isa-applesmc` is the SMC;
 //! - one ACPI table, the `EC` and `USBX` devices macOS looks for (acpi.rs);
 //! - CPUID leaf 1 reported as a Skylake-SP (family 6, model 85, stepping 4), a CPU every x86-64
 //!   macOS from 10.13 to 26 knows, whatever `-cpu` model the VM has;
@@ -43,6 +44,28 @@ pub fn drivers(o: &Options) -> Vec<&'static str> {
     d
 }
 
+/// A kext the image carries in `EFI/OC/Kexts`: its bundle, and the executable in its
+/// `Contents/MacOS`.
+pub struct Kext {
+    pub bundle: &'static str,
+    pub executable: &'static str,
+}
+
+pub const LILU: Kext = Kext {
+    bundle: "Lilu.kext",
+    executable: "Lilu",
+};
+
+/// Lilu's plugin, built from kext/.
+pub const REIMS_VGPU: Kext = Kext {
+    bundle: "ReimsVgpu.kext",
+    executable: "ReimsVgpu",
+};
+
+/// The kexts load on Darwin 25 alone, macOS 26, whose GPU driver ReimsVgpu patches.
+const KEXT_MIN_KERNEL: &str = "25.0.0";
+const KEXT_MAX_KERNEL: &str = "25.99.99";
+
 /// Arguments for every boot: kernel symbols in panic logs, and no panics on a TLB shootdown or a
 /// timeout a vCPU took because the host descheduled it.
 pub const DEFAULT_BOOT_ARGS: &str = "keepsyms=1 tlbto_us=0 vti=9";
@@ -63,6 +86,8 @@ pub struct Options {
     pub hide_vm: bool,
     /// OpenCanopy's graphical picker, or OpenCore's text one.
     pub graphical_picker: bool,
+    /// Lilu and ReimsVgpu, for macOS 26.
+    pub kexts: bool,
 }
 
 pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
@@ -109,7 +134,28 @@ pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
         Value::Dictionary(Dictionary::new()),
     )?;
 
-    set(c, &["Kernel"], "Add", Value::Array(vec![]))?;
+    let mut kexts = Vec::new();
+    if o.kexts {
+        for (k, comment) in [
+            (LILU, "Patch engine"),
+            (REIMS_VGPU, "reims-vgpu's GPU features on macOS 26"),
+        ] {
+            let mut e = template(c, &["Kernel", "Add"])?;
+            e.insert("Arch".into(), "x86_64".into());
+            e.insert("BundlePath".into(), k.bundle.into());
+            e.insert("Comment".into(), comment.into());
+            e.insert("Enabled".into(), true.into());
+            e.insert(
+                "ExecutablePath".into(),
+                format!("Contents/MacOS/{}", k.executable).into(),
+            );
+            e.insert("MaxKernel".into(), KEXT_MAX_KERNEL.into());
+            e.insert("MinKernel".into(), KEXT_MIN_KERNEL.into());
+            e.insert("PlistPath".into(), "Contents/Info.plist".into());
+            kexts.push(Value::Dictionary(e));
+        }
+    }
+    set(c, &["Kernel"], "Add", Value::Array(kexts))?;
     set(c, &["Kernel"], "Block", Value::Array(vec![]))?;
     set(c, &["Kernel"], "Force", Value::Array(vec![]))?;
     let (data, mask) = if o.cpuid_spoof {

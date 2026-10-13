@@ -63,9 +63,9 @@ reims-util opencore -o OpenCore.qcow2
 This writes a 128 MiB disk image with OpenCore 1.0.8 on its EFI partition: qcow2 for a `.qcow2`
 name, and a raw disk image for anything else (`.img`). Beside it go `OVMF_CODE.fd` and
 `OVMF_VARS.fd`, with OVMF's licenses. What goes in them is downloaded from pinned sources
-(OpenCore's release and a commit of its picker icons and boot chime, OcBinaryData, from GitHub;
-OVMF from Arch Linux's `edk2-ovmf` package), checked against the hashes reims-util knows, and
-cached in `~/.cache/reims-util`, so it's only downloaded once.
+(OpenCore's release, a commit of its picker icons and boot chime, OcBinaryData, and Lilu's
+release, from GitHub; OVMF from Arch Linux's `edk2-ovmf` package), checked against the hashes
+reims-util knows, and cached in `~/.cache/reims-util`, so it's only downloaded once.
 
 Each image gets a Mac identity of its own: a serial number, logic board serial (MLB), system UUID
 and ROM, which it prints when it's done. Keep them if you'll want the same identity in another
@@ -79,8 +79,13 @@ another with `--model`:
 
 What's in the image, and why:
 
-- **No kexts.** QEMU's `isa-applesmc` is the SMC, and the GPU is reims-vgpu's, which macOS drives
-  with its own driver.
+- **Two kexts, which load on macOS 26 alone**: Lilu, and its plugin ReimsVgpu.kext, from this
+  repository's `kext/`. macOS drives reims-vgpu's GPU with its own driver, whose x86-64 build
+  asks the device for an old interface version (6) and turns every later feature off. The kext
+  has it ask for the one arm64 guests use (245), and patches what the driver and its Metal plugin
+  hardcode, so Metal offers the GPU families GPU-accelerated Chrome needs, and D32S8
+  depth/stencil textures. `--no-kexts` leaves them out, and the boot argument `-reimsvgpuoff`
+  turns the kext off. There are no others: QEMU's `isa-applesmc` is the SMC.
 - **The drivers a VM boots with**: OpenRuntime, OpenHfsPlus (recovery images and installers are
   HFS+), OpenPartitionDxe (for older recovery images) and ResetNvramEntry.
 - **The graphical picker**, OpenCanopy, with the GoldenGate icons. Pick with the arrow keys, Tab
@@ -168,9 +173,27 @@ made) or, for `list`, the versions, or `{"event":"error","message":"…"}`.
 reims-util --json online-installer tahoe -o ~/vms/mac
 ```
 
+## The ReimsVgpu kext
+
+`kext/` holds ReimsVgpu.kext's source. A kext builds on a Mac alone, while reims-util builds
+anywhere, so the built kext is in the repository too, at `kext/ReimsVgpu.kext`, and that's the one
+reims-util puts in its images. After changing the source, rebuild it on a Mac with Xcode, and
+commit it with the change:
+
+```sh
+cd kext
+make LILU=path/to/Lilu.kext KERNEL_SDK=path/to/MacKernelSDK
+```
+
+`LILU` is a DEBUG build of Lilu 1.7.2, the version the image carries, from
+[Lilu's releases](https://github.com/acidanthera/Lilu/releases), and `KERNEL_SDK` a checkout of
+[MacKernelSDK](https://github.com/acidanthera/MacKernelSDK). With the same Xcode, the same
+source builds the same bytes. `make` also writes `kext/sources.sha256`, what the kext was built
+from, and `cargo test` fails when the source no longer matches it.
+
 ## License
 
 reims-util is licensed under GPL-2.0-or-later OR LGPL-3.0-or-later; see [LICENSE](LICENSE). The
-serial number tables come from OpenCorePkg's macserial, under its BSD-3-Clause license.
-OpenCore, its picker icons and chime (OcBinaryData) and OVMF, which reims-util downloads, keep
-their own licenses.
+serial number tables come from OpenCorePkg's macserial, and the built ReimsVgpu.kext holds code
+of Lilu's, each under its BSD-3-Clause license. OpenCore, its picker icons and chime
+(OcBinaryData), Lilu and OVMF, which reims-util downloads, keep their own licenses.

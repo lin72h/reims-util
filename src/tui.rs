@@ -271,6 +271,7 @@ impl App {
                     no_cpuid_spoof: false,
                     show_vm: !form.toggle(5),
                     text_picker: !form.toggle(7),
+                    no_kexts: false,
                     no_ovmf: !form.toggle(3),
                     ovmf_dir: None,
                 };
