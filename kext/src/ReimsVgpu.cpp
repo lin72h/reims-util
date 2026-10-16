@@ -52,9 +52,33 @@ const uint8_t tiledBoundsFind[] {0x4c, 0x89, 0xe7, 0x4c, 0x89, 0xf6, 0x41, 0xff,
 const uint8_t tiledBoundsReplace[] {0x4c, 0x89, 0xe7, 0x4c, 0x89, 0xf6, 0x41, 0xff, 0xd5,
                                     0x49, 0x39, 0xc7, 0xeb, 0x4e};
 
+// -[PGSerializer supportsSwizzledTextures] and -[PGSerializer supportsTextureDescriptor2] read
+// flags that nothing in the x86-64 plugin sets (the arm64 plugin sets them from the guest's
+// features), so both answer NO. Every texture then goes to the host in the first descriptor
+// form, which has no swizzle and 8 bits of usage: the host never sees a texture's swizzle, and
+// one made with a swizzle reads unswizzled. macOS 26's Clear and Tinted icon styles draw their
+// glyphs from RG8Unorm luminance-alpha textures swizzled (R, R, R, G), which then read
+// (L, A, 0, 1), so white glyphs come out yellow. Version 245 has both features (110 and 237),
+// and the host reads the second forms whatever the version: both getters answer YES. Each is
+// `movsbl 0x3x(%rdi), %eax` between `push rbp; mov rbp, rsp` and `pop rbp; ret`, and becomes
+// `xor eax, eax; inc eax`. The two getters and the setter between them are one pattern, on a
+// page of their own. A texture view's swizzle still goes nowhere: the x86-64 plugin serializes
+// every view without one.
+const uint8_t textureFormsFind[] {
+    0x55, 0x48, 0x89, 0xe5, 0x0f, 0xbe, 0x47, 0x32, 0x5d, 0xc3, // supportsSwizzledTextures
+    0x55, 0x48, 0x89, 0xe5, 0x88, 0x57, 0x32, 0x5d, 0xc3,       // setSupportsSwizzledTextures:
+    0x55, 0x48, 0x89, 0xe5, 0x0f, 0xbe, 0x47, 0x33, 0x5d, 0xc3, // supportsTextureDescriptor2
+};
+const uint8_t textureFormsReplace[] {
+    0x55, 0x48, 0x89, 0xe5, 0x31, 0xc0, 0xff, 0xc0, 0x5d, 0xc3,
+    0x55, 0x48, 0x89, 0xe5, 0x88, 0x57, 0x32, 0x5d, 0xc3,
+    0x55, 0x48, 0x89, 0xe5, 0x31, 0xc0, 0xff, 0xc0, 0x5d, 0xc3,
+};
+
 UserPatch::Patch pluginPatches[] {
     {metalPlugin, featureProfileFind, featureProfileReplace, sizeof(featureProfileFind)},
     {metalPlugin, tiledBoundsFind, tiledBoundsReplace, sizeof(tiledBoundsFind)},
+    {metalPlugin, textureFormsFind, textureFormsReplace, sizeof(textureFormsFind)},
 };
 
 constexpr size_t RegistersOffset = 0xe28;
