@@ -13,7 +13,9 @@
 //!   when the VM has one, unless macOS's "Play sound on startup" is off (`StartupMute`);
 //! - on macOS 26, two kexts: Lilu, and its plugin ReimsVgpu (kext/), which has macOS's own driver
 //!   for reims-vgpu's GPU negotiate the interface version arm64 guests use, and patches what the
-//!   x86-64 driver and its Metal plugin hardcode; no others, as QEMU's `isa-applesmc` is the SMC;
+//!   x86-64 driver and its Metal plugin hardcode; after them, the seven apv-arm64-port kexts
+//!   (apv_arm64_port.rs), on macOS 26.4 and later alone; no others, as QEMU's `isa-applesmc` is
+//!   the SMC;
 //! - one ACPI table, the `EC` and `USBX` devices macOS looks for (acpi.rs);
 //! - CPUID leaf 1 reported as a Skylake-SP (family 6, model 85, stepping 4), a CPU every x86-64
 //!   macOS from 10.13 to 26 knows, whatever `-cpu` model the VM has;
@@ -23,6 +25,7 @@
 //!   does not see it runs in a VM and lets iCloud and the App Store sign in;
 //! - the SMBIOS identity (smbios.rs), and the picker's timeout and boot arguments.
 
+use super::apv_arm64_port::Kext as PortKext;
 use super::smbios::Smbios;
 use anyhow::{Context, Result, bail};
 use plist::{Dictionary, Value};
@@ -65,6 +68,9 @@ pub const REIMS_VGPU: Kext = Kext {
 /// The kexts load on Darwin 25 alone, macOS 26, whose GPU driver ReimsVgpu patches.
 const KEXT_MIN_KERNEL: &str = "25.0.0";
 const KEXT_MAX_KERNEL: &str = "25.99.99";
+/// The apv-arm64-port kexts load from macOS 26.4 on: on older builds, ReimsVgpu has macOS's own
+/// driver take the GPU. Where the set refuses at boot, it leaves the GPU to that driver too.
+const PORT_MIN_KERNEL: &str = "25.4.0";
 
 /// Arguments for every boot: kernel symbols in panic logs, and no panics on a TLB shootdown or a
 /// timeout a vCPU took because the host descheduled it.
@@ -86,11 +92,13 @@ pub struct Options {
     pub hide_vm: bool,
     /// OpenCanopy's graphical picker, or OpenCore's text one.
     pub graphical_picker: bool,
-    /// Lilu and ReimsVgpu, for macOS 26.
+    /// Lilu and ReimsVgpu (and the set `make` is given), for macOS 26.
     pub kexts: bool,
 }
 
-pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
+/// The config.plist for `o`, from the release's `sample`. With `o.kexts`, `port`
+/// (apv_arm64_port.rs) loads after Lilu and ReimsVgpu.
+pub fn make(sample: &[u8], o: &Options, port: &[PortKext<'_>]) -> Result<Vec<u8>> {
     let mut root: Value = plist::from_bytes(sample).context("read Sample.plist")?;
     let c = root
         .as_dictionary_mut()
@@ -134,27 +142,11 @@ pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
         Value::Dictionary(Dictionary::new()),
     )?;
 
-    let mut kexts = Vec::new();
-    if o.kexts {
-        for (k, comment) in [
-            (LILU, "Patch engine"),
-            (REIMS_VGPU, "reims-vgpu's GPU features on macOS 26"),
-        ] {
-            let mut e = template(c, &["Kernel", "Add"])?;
-            e.insert("Arch".into(), "x86_64".into());
-            e.insert("BundlePath".into(), k.bundle.into());
-            e.insert("Comment".into(), comment.into());
-            e.insert("Enabled".into(), true.into());
-            e.insert(
-                "ExecutablePath".into(),
-                format!("Contents/MacOS/{}", k.executable).into(),
-            );
-            e.insert("MaxKernel".into(), KEXT_MAX_KERNEL.into());
-            e.insert("MinKernel".into(), KEXT_MIN_KERNEL.into());
-            e.insert("PlistPath".into(), "Contents/Info.plist".into());
-            kexts.push(Value::Dictionary(e));
-        }
-    }
+    let kexts = if o.kexts {
+        kernel_add(&template(c, &["Kernel", "Add"])?, port)
+    } else {
+        Vec::new()
+    };
     set(c, &["Kernel"], "Add", Value::Array(kexts))?;
     set(c, &["Kernel"], "Block", Value::Array(vec![]))?;
     set(c, &["Kernel"], "Force", Value::Array(vec![]))?;
@@ -316,6 +308,49 @@ pub fn make(sample: &[u8], o: &Options) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Kernel > Add's entries, made from the sample's first: Lilu and ReimsVgpu for macOS 26, then
+/// `port` for macOS 26.4 and later.
+fn kernel_add(template: &Dictionary, port: &[PortKext<'_>]) -> Vec<Value> {
+    let mut add = vec![
+        (
+            LILU.bundle,
+            Some(LILU.executable),
+            KEXT_MIN_KERNEL,
+            "Patch engine".to_string(),
+        ),
+        (
+            REIMS_VGPU.bundle,
+            Some(REIMS_VGPU.executable),
+            KEXT_MIN_KERNEL,
+            "reims-vgpu's GPU features on macOS 26".to_string(),
+        ),
+    ];
+    for k in port {
+        add.push((
+            k.bundle,
+            k.executable.as_deref(),
+            PORT_MIN_KERNEL,
+            format!("apv-arm64-port's {}", k.bundle.trim_end_matches(".kext")),
+        ));
+    }
+    add.into_iter()
+        .map(|(bundle, executable, min_kernel, comment)| {
+            let mut e = template.clone();
+            e.insert("Arch".into(), "x86_64".into());
+            e.insert("BundlePath".into(), bundle.into());
+            e.insert("Comment".into(), comment.into());
+            e.insert("Enabled".into(), true.into());
+            // A kext with no code has an empty path.
+            let path = executable.map(|x| format!("Contents/MacOS/{x}"));
+            e.insert("ExecutablePath".into(), path.unwrap_or_default().into());
+            e.insert("MaxKernel".into(), KEXT_MAX_KERNEL.into());
+            e.insert("MinKernel".into(), min_kernel.into());
+            e.insert("PlistPath".into(), "Contents/Info.plist".into());
+            Value::Dictionary(e)
+        })
+        .collect()
+}
+
 fn dict<'a>(root: &'a mut Dictionary, path: &[&str]) -> Result<&'a mut Dictionary> {
     let mut d = root;
     for (i, k) in path.iter().enumerate() {
@@ -358,4 +393,61 @@ fn unhex(s: &str) -> Result<Vec<u8>> {
                 .with_context(|| format!("not hex: {s}"))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::opencore::apv_arm64_port as port;
+
+    fn fields(v: &Value, keys: &[&str]) -> Vec<String> {
+        let d = v.as_dictionary().unwrap();
+        keys.iter()
+            .map(|k| d.get(k).and_then(Value::as_string).unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn kernel_add_entries() {
+        let mut template = Dictionary::new();
+        template.insert("BundlePath".into(), "Lilu.kext".into());
+        template.insert("Enabled".into(), false.into());
+        let keys = [
+            "BundlePath",
+            "ExecutablePath",
+            "MinKernel",
+            "MaxKernel",
+            "Arch",
+        ];
+
+        // With none of the set in kext/, Lilu and ReimsVgpu alone.
+        let today = kernel_add(&template, &port::set(&[]).unwrap());
+        let want = |b: &str, x: &str| {
+            [b, x, KEXT_MIN_KERNEL, KEXT_MAX_KERNEL, "x86_64"].map(str::to_string)
+        };
+        assert_eq!(
+            today.iter().map(|e| fields(e, &keys)).collect::<Vec<_>>(),
+            [
+                want("Lilu.kext", "Contents/MacOS/Lilu"),
+                want("ReimsVgpu.kext", "Contents/MacOS/ReimsVgpu"),
+            ]
+        );
+
+        // With the set, it follows them in its order, from macOS 26.4; a kext with no code has
+        // no path.
+        let files = port::tests::fixture();
+        let set = port::set(&port::tests::refs(&files)).unwrap();
+        let all = kernel_add(&template, &set);
+        assert_eq!(all.len(), 9);
+        assert_eq!(all[..2], today[..]);
+        for (e, k) in all[2..].iter().zip(&set) {
+            let f = fields(e, &keys);
+            assert_eq!(f[0], k.bundle);
+            let x = k.executable.as_ref().map(|x| format!("Contents/MacOS/{x}"));
+            assert_eq!(f[1], x.unwrap_or_default());
+            assert_eq!(f[2..], [PORT_MIN_KERNEL, KEXT_MAX_KERNEL, "x86_64"]);
+            assert!(fields(e, &["Comment"])[0].starts_with("apv-arm64-port's "));
+        }
+        assert!(all.iter().any(|e| fields(e, &keys)[1].is_empty()));
+    }
 }

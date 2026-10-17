@@ -104,10 +104,13 @@ pub struct OpencoreArgs {
     /// Use OpenCore's text picker instead of the graphical one
     #[arg(long)]
     pub text_picker: bool,
-    /// Leave out Lilu and ReimsVgpu.kext, so macOS 26 drives reims-vgpu's GPU with its driver as
-    /// it is
+    /// Leave out Lilu, ReimsVgpu.kext and the apv-arm64-port kexts, so macOS 26 drives
+    /// reims-vgpu's GPU with its driver as it is
     #[arg(long)]
     pub no_kexts: bool,
+    /// Leave out the apv-arm64-port kexts
+    #[arg(long)]
+    pub no_apv_arm64_port: bool,
     /// Write no OVMF files
     #[arg(long)]
     pub no_ovmf: bool,
@@ -344,6 +347,7 @@ pub fn opencore_options(a: &OpencoreArgs) -> Result<opencore::Options> {
             graphical_picker: !a.text_picker,
             kexts: !a.no_kexts,
         },
+        apv_arm64_port: !a.no_apv_arm64_port,
         ovmf_dir,
     })
 }

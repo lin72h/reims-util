@@ -1,10 +1,12 @@
 //! The OpenCore boot image: a 128 MiB GPT disk whose EFI system partition holds a pinned
 //! OpenCore release, the drivers and ACPI table a VM needs, the picker's icons and the boot chime
 //! from a pinned commit of OcBinaryData, a pinned Lilu release and its plugin ReimsVgpu.kext
-//! (kext/), and a `config.plist` made for a q35 VM (config.rs) with an SMBIOS identity of its own
-//! (smbios.rs). OVMF goes beside it (ovmf.rs), where reims-ctl looks for it.
+//! (kext/), the apv-arm64-port kexts (apv_arm64_port.rs), and a `config.plist` made for a q35 VM
+//! (config.rs) with an SMBIOS identity of its own (smbios.rs). OVMF goes beside it (ovmf.rs),
+//! where reims-ctl looks for it.
 
 pub mod acpi;
+pub mod apv_arm64_port;
 pub mod config;
 pub mod smbios;
 
@@ -58,6 +60,8 @@ const DISK_SIZE: u64 = 128 << 20;
 pub struct Options {
     pub output: PathBuf,
     pub config: config::Options,
+    /// The apv-arm64-port kexts too, when kext/ holds them; with `config.kexts` alone.
+    pub apv_arm64_port: bool,
     /// Where OVMF's files go, or None to write none.
     pub ovmf_dir: Option<PathBuf>,
 }
@@ -68,6 +72,8 @@ pub struct Outputs {
     pub format: Format,
     pub opencore: &'static str,
     pub smbios: smbios::Smbios,
+    /// Whether the image carries the apv-arm64-port kexts.
+    pub apv_arm64_port: bool,
     pub ovmf: Option<crate::ovmf::Outputs>,
 }
 
@@ -76,6 +82,11 @@ pub fn build(o: &Options, r: &dyn Reporter) -> Result<Outputs> {
     progress::check(r)?;
     let resources_path = cache::fetch(&RESOURCES, r)?;
     progress::check(r)?;
+    let port = if o.config.kexts && o.apv_arm64_port {
+        apv_arm64_port::set(apv_arm64_port::FILES)?
+    } else {
+        Vec::new()
+    };
     let lilu_path = if o.config.kexts {
         let p = cache::fetch(&LILU_RELEASE, r)?;
         progress::check(r)?;
@@ -84,10 +95,15 @@ pub fn build(o: &Options, r: &dyn Reporter) -> Result<Outputs> {
         None
     };
     r.step(&format!("Building the OpenCore {VERSION} image"));
-    let mut files = files(&zip_path, &o.config)?;
+    let mut files = files(&zip_path, &o.config, &port)?;
     files.extend(resources(&resources_path, o.config.graphical_picker)?);
     if let Some(p) = &lilu_path {
         files.extend(kexts(p)?);
+    }
+    for k in &port {
+        for (p, d) in &k.files {
+            files.push((format!("EFI/OC/Kexts/{}/{p}", k.bundle), d.to_vec()));
+        }
     }
     let files: Vec<(String, Data)> = files
         .into_iter()
@@ -115,12 +131,17 @@ pub fn build(o: &Options, r: &dyn Reporter) -> Result<Outputs> {
         format,
         opencore: VERSION,
         smbios: o.config.smbios.clone(),
+        apv_arm64_port: !port.is_empty(),
         ovmf,
     })
 }
 
 /// The partition's files, from the release's X64 tree, and the made config.plist and ACPI table.
-fn files(zip_path: &Path, c: &config::Options) -> Result<Vec<(String, Vec<u8>)>> {
+fn files(
+    zip_path: &Path,
+    c: &config::Options,
+    port: &[apv_arm64_port::Kext<'_>],
+) -> Result<Vec<(String, Vec<u8>)>> {
     let f =
         std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
     let mut zip = zip::ZipArchive::new(f).context("read the OpenCore release")?;
@@ -150,7 +171,10 @@ fn files(zip_path: &Path, c: &config::Options) -> Result<Vec<(String, Vec<u8>)>>
         ));
     }
     let sample = read("Docs/Sample.plist")?;
-    files.push(("EFI/OC/config.plist".into(), config::make(&sample, c)?));
+    files.push((
+        "EFI/OC/config.plist".into(),
+        config::make(&sample, c, port)?,
+    ));
     files.push((
         format!("EFI/OC/ACPI/{}", acpi::FILE_NAME),
         acpi::ssdt_ec_usbx(),

@@ -85,7 +85,8 @@ What's in the image, and why:
   has it ask for the one arm64 guests use (245), and patches what the driver and its Metal plugin
   hardcode, so Metal offers the GPU families GPU-accelerated Chrome needs, and D32S8
   depth/stencil textures. `--no-kexts` leaves them out, and the boot argument `-reimsvgpuoff`
-  turns the kext off. There are no others: QEMU's `isa-applesmc` is the SMC.
+  turns the kext off. The apv-arm64-port kexts load after these, on macOS 26.4 and later
+  ([below](#apv-arm64-port)). There are no others: QEMU's `isa-applesmc` is the SMC.
 - **The drivers a VM boots with**: OpenRuntime, OpenHfsPlus (recovery images and installers are
   HFS+), OpenPartitionDxe (for older recovery images) and ResetNvramEntry.
 - **The graphical picker**, OpenCanopy, with the GoldenGate icons. Pick with the arrow keys, Tab
@@ -190,6 +191,12 @@ make LILU=path/to/Lilu.kext KERNEL_SDK=path/to/MacKernelSDK
 [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK). With the same Xcode, the same
 source builds the same bytes. `make` also writes `kext/sources.sha256`, what the kext was built
 from, and `cargo test` fails when the source no longer matches it.
+
+## apv-arm64-port
+
+apv-arm64-port drives reims-vgpu's GPU on macOS 26.4 and later with kexts of its own, which every
+image carries by default; older macOS 26 builds keep macOS's own driver with ReimsVgpu.kext.
+`--no-apv-arm64-port` makes an image without them.
 
 ## License
 
