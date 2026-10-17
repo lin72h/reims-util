@@ -271,6 +271,7 @@ impl App {
                     no_cpuid_spoof: false,
                     show_vm: !form.toggle(5),
                     text_picker: !form.toggle(7),
+                    show_picker: form.toggle(8),
                     no_kexts: false,
                     no_apv_arm64_port: false,
                     no_ovmf: !form.toggle(3),
@@ -628,8 +629,8 @@ fn opencore_form() -> Form {
             },
             Field {
                 label: "Picker timeout",
-                help: "Seconds OpenCore's boot picker waits before it boots the default entry; \
-                       0 waits for you."
+                help: "Seconds OpenCore's boot picker, when shown, waits before it boots the \
+                       default entry; 0 waits for you."
                     .into(),
                 kind: Kind::Text("5".into(), ""),
             },
@@ -664,6 +665,13 @@ fn opencore_form() -> Form {
                 label: "Graphical picker",
                 help: "OpenCore's boot picker with icons, or its text list when off.".into(),
                 kind: Kind::Toggle(true),
+            },
+            Field {
+                label: "Show the picker",
+                help: "OpenCore's boot picker at every boot, or none when off: OpenCore boots the \
+                       default entry."
+                    .into(),
+                kind: Kind::Toggle(false),
             },
         ],
     }

@@ -83,7 +83,8 @@ pub struct OpencoreArgs {
     /// The ROM: 12 hex digits or a MAC address, such as the VM's (default: random)
     #[arg(long)]
     pub rom: Option<String>,
-    /// Seconds the boot picker waits before it boots the default entry (0 waits for you)
+    /// Seconds the boot picker, when shown, waits before it boots the default entry (0 waits for
+    /// you)
     #[arg(long, default_value_t = 5)]
     pub timeout: u32,
     /// The kernel's boot arguments
@@ -104,6 +105,9 @@ pub struct OpencoreArgs {
     /// Use OpenCore's text picker instead of the graphical one
     #[arg(long)]
     pub text_picker: bool,
+    /// Show OpenCore's boot picker at every boot (by default OpenCore boots the default entry)
+    #[arg(long)]
+    pub show_picker: bool,
     /// Leave out Lilu, ReimsVgpu.kext and the apv-arm64-port kexts, so macOS 26 drives
     /// reims-vgpu's GPU with its driver as it is
     #[arg(long)]
@@ -345,6 +349,7 @@ pub fn opencore_options(a: &OpencoreArgs) -> Result<opencore::Options> {
             cpuid_spoof: !a.no_cpuid_spoof,
             hide_vm: !a.show_vm,
             graphical_picker: !a.text_picker,
+            show_picker: a.show_picker,
             kexts: !a.no_kexts,
         },
         apv_arm64_port: !a.no_apv_arm64_port,

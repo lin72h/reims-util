@@ -23,6 +23,7 @@
 //!   `ForceSecureBootScheme`), with Apple Secure Boot off, any volume scanned, no vault;
 //! - optionally, the kernel's `kern.hv_vmm_present` swapped with `kern.hibernatecount`, so macOS
 //!   does not see it runs in a VM and lets iCloud and the App Store sign in;
+//! - the picker hidden, so OpenCore boots the default entry, unless asked to show it;
 //! - the SMBIOS identity (smbios.rs), and the picker's timeout and boot arguments.
 
 use super::apv_arm64_port::Kext as PortKext;
@@ -92,6 +93,8 @@ pub struct Options {
     pub hide_vm: bool,
     /// OpenCanopy's graphical picker, or OpenCore's text one.
     pub graphical_picker: bool,
+    /// The picker at every boot, or none: OpenCore boots the default entry.
+    pub show_picker: bool,
     /// Lilu and ReimsVgpu (and the set `make` is given), for macOS 26.
     pub kexts: bool,
 }
@@ -222,7 +225,7 @@ pub fn make(sample: &[u8], o: &Options, port: &[PortKext<'_>]) -> Result<Vec<u8>
     set(c, &["Misc", "Boot"], "PickerMode", mode.into())?;
     set(c, &["Misc", "Boot"], "PickerVariant", PICKER_VARIANT.into())?;
     set(c, &["Misc", "Boot"], "PollAppleHotKeys", true.into())?;
-    set(c, &["Misc", "Boot"], "ShowPicker", true.into())?;
+    set(c, &["Misc", "Boot"], "ShowPicker", o.show_picker.into())?;
     set(c, &["Misc", "Boot"], "Timeout", (o.timeout as i64).into())?;
     set(c, &["Misc"], "Entries", Value::Array(vec![]))?;
     set(c, &["Misc"], "Tools", Value::Array(vec![]))?;

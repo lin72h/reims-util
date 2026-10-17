@@ -39,7 +39,7 @@ reims-ctl create mac --opencore OpenCore.qcow2 \
 ```
 
 `reims-ctl` copies the OpenCore image into the VM, finds OVMF beside it, and takes the installer
-as it is. OpenCore's picker boots "macOS Base System" after 5 seconds, and you're in macOS
+as it is. OpenCore boots "macOS Base System" with no picker, and you're in macOS
 Recovery: erase the VM's disk in Disk Utility, then pick Reinstall macOS, which downloads the rest
 from Apple.
 
@@ -89,8 +89,10 @@ What's in the image, and why:
   ([below](#apv-arm64-port)). There are no others: QEMU's `isa-applesmc` is the SMC.
 - **The drivers a VM boots with**: OpenRuntime, OpenHfsPlus (recovery images and installers are
   HFS+), OpenPartitionDxe (for older recovery images) and ResetNvramEntry.
-- **The graphical picker**, OpenCanopy, with the GoldenGate icons. Pick with the arrow keys, Tab
-  and Enter; it has no mouse pointer in a VM. `--text-picker` gives OpenCore's text list instead.
+- **No boot picker**: OpenCore boots the default entry, the disk macOS last chose as its startup
+  disk. `--show-picker` shows it at every boot: the graphical one, OpenCanopy, with the GoldenGate
+  icons. Pick with the arrow keys, Tab and Enter; it has no mouse pointer in a VM.
+  `--text-picker` gives OpenCore's text list instead.
 - **The boot chime**, which plays on the VM's Intel HD Audio controller when it has one (QEMU's
   `ich9-intel-hda` with an `hda-output` codec). Turning off "Play sound on startup" in macOS's
   Sound settings silences it.
@@ -101,7 +103,7 @@ What's in the image, and why:
   `--show-vm` turns that off.
 - **System Integrity Protection on**, as on a real Mac. `--disable-sip` turns it off.
 
-`--timeout` sets how long the picker waits (0 waits for you), `--boot-args` the kernel's boot
+`--timeout` sets how long a shown picker waits (0 waits for you), `--boot-args` the kernel's boot
 arguments, and `--verbose-boot` shows the kernel's messages while it boots.
 `reims-util opencore --help` lists the rest.
 
