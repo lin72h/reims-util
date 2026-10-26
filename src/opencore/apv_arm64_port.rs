@@ -26,6 +26,17 @@ pub struct Kext<'a> {
 /// after those of the set its `OSBundleLibraries` names. Empty when `files` holds no kext; files
 /// beside the bundles are left out, and anything short of the exact set refused.
 pub fn set<'a>(files: &[(&'a str, &'a [u8])]) -> Result<Vec<Kext<'a>>> {
+    set_of(files, &SET, "apv-arm64-port", "all seven")
+}
+
+/// The kexts `names` in `files`, taken as `set` takes apv-arm64-port's: `what` names them in its
+/// errors, and `whole` says how many make the set. video.rs takes reims-vgpu-video's kexts so.
+pub(super) fn set_of<'a>(
+    files: &[(&'a str, &'a [u8])],
+    names: &[&str],
+    what: &str,
+    whole: &str,
+) -> Result<Vec<Kext<'a>>> {
     let mut bundles: BTreeMap<&str, Vec<(&str, &[u8])>> = BTreeMap::new();
     for &(path, data) in files {
         let Some((bundle, rel)) = path.split_once('/') else {
@@ -34,10 +45,10 @@ pub fn set<'a>(files: &[(&'a str, &'a [u8])]) -> Result<Vec<Kext<'a>>> {
         if !bundle.ends_with(".kext") || path.split('/').any(|c| c.starts_with('.')) {
             continue;
         }
-        if !SET.contains(&bundle) {
+        if !names.contains(&bundle) {
             bail!(
-                "kext/{bundle} is not one of the apv-arm64-port kexts ({})",
-                SET.join(", ")
+                "kext/{bundle} is not one of the {what} kexts ({})",
+                names.join(", ")
             );
         }
         bundles.entry(bundle).or_default().push((rel, data));
@@ -45,14 +56,14 @@ pub fn set<'a>(files: &[(&'a str, &'a [u8])]) -> Result<Vec<Kext<'a>>> {
     if bundles.is_empty() {
         return Ok(Vec::new());
     }
-    let missing: Vec<&str> = SET
+    let missing: Vec<&str> = names
         .iter()
         .copied()
         .filter(|b| !bundles.contains_key(b))
         .collect();
     if !missing.is_empty() {
         bail!(
-            "partial apv-arm64-port set in kext/, without {}: deploy all seven",
+            "partial {what} set in kext/, without {}: deploy {whole}",
             missing.join(", ")
         );
     }
@@ -60,7 +71,7 @@ pub fn set<'a>(files: &[(&'a str, &'a [u8])]) -> Result<Vec<Kext<'a>>> {
     for (bundle, files) in bundles {
         kexts.push(kext(bundle, files)?);
     }
-    order(kexts)
+    order(kexts, what)
 }
 
 fn kext<'a>(bundle: &'a str, files: Vec<(&'a str, &'a [u8])>) -> Result<Kext<'a>> {
@@ -96,7 +107,7 @@ fn kext<'a>(bundle: &'a str, files: Vec<(&'a str, &'a [u8])>) -> Result<Kext<'a>
 }
 
 /// Orders the kexts so each comes after the ones it links against, and otherwise by name.
-fn order(mut left: Vec<Kext<'_>>) -> Result<Vec<Kext<'_>>> {
+fn order<'a>(mut left: Vec<Kext<'a>>, what: &str) -> Result<Vec<Kext<'a>>> {
     let ids: BTreeSet<String> = left.iter().map(|k| k.identifier.clone()).collect();
     let mut placed = BTreeSet::new();
     let mut out = Vec::new();
@@ -109,7 +120,7 @@ fn order(mut left: Vec<Kext<'_>>) -> Result<Vec<Kext<'_>>> {
         let Some(i) = ready else {
             let names: Vec<&str> = left.iter().map(|k| k.bundle).collect();
             bail!(
-                "the apv-arm64-port kexts {} link against each other in a cycle",
+                "the {what} kexts {} link against each other in a cycle",
                 names.join(", ")
             );
         };
@@ -125,7 +136,7 @@ pub(crate) mod tests {
     use super::*;
 
     /// A bundle's Info.plist: its identifier, executable and libraries.
-    fn info(id: &str, executable: Option<&str>, libraries: &[&str]) -> Vec<u8> {
+    pub(crate) fn info(id: &str, executable: Option<&str>, libraries: &[&str]) -> Vec<u8> {
         let mut d = plist::Dictionary::new();
         d.insert("CFBundleIdentifier".into(), id.into());
         if let Some(e) = executable {

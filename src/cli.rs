@@ -108,13 +108,17 @@ pub struct OpencoreArgs {
     /// Show OpenCore's boot picker at every boot (by default OpenCore boots the default entry)
     #[arg(long)]
     pub show_picker: bool,
-    /// Leave out Lilu, ReimsVgpu.kext and the apv-arm64-port kexts, so macOS 26 drives
-    /// reims-vgpu's GPU with its driver as it is
+    /// Leave out Lilu, ReimsVgpu.kext, the apv-arm64-port kexts and reims-vgpu-video's, so
+    /// macOS 26 drives reims-vgpu's GPU with its driver as it is
     #[arg(long)]
     pub no_kexts: bool,
-    /// Leave out the apv-arm64-port kexts
+    /// Leave out the apv-arm64-port kexts, and with them reims-vgpu-video's, which link against
+    /// their mapper
     #[arg(long)]
     pub no_apv_arm64_port: bool,
+    /// Leave out reims-vgpu-video's kexts, the VideoToolbox and scaler devices' guest drivers
+    #[arg(long)]
+    pub no_video: bool,
     /// Write no OVMF files
     #[arg(long)]
     pub no_ovmf: bool,
@@ -353,6 +357,7 @@ pub fn opencore_options(a: &OpencoreArgs) -> Result<opencore::Options> {
             kexts: !a.no_kexts,
         },
         apv_arm64_port: !a.no_apv_arm64_port,
+        video: !a.no_video,
         ovmf_dir,
     })
 }

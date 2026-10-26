@@ -274,6 +274,7 @@ impl App {
                     show_picker: form.toggle(8),
                     no_kexts: false,
                     no_apv_arm64_port: false,
+                    no_video: false,
                     no_ovmf: !form.toggle(3),
                     ovmf_dir: None,
                 };

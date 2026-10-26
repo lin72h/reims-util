@@ -1,8 +1,10 @@
 //! Embeds the apv-arm64-port kexts, the seven bundles in kext/ that `SET` names, so the image
-//! carries them as it carries ReimsVgpu.kext (src/opencore/apv_arm64_port.rs). Writes
-//! `$OUT_DIR/apv_arm64_port.rs`: each file of each of them, by its path under kext/, with its
-//! bytes, dotfiles left out. Nothing else in kext/ is read. With none of the seven there, nothing
-//! is embedded; with only some, the build fails, as the seven load as one.
+//! carries them as it carries ReimsVgpu.kext (src/opencore/apv_arm64_port.rs), and
+//! reims-vgpu-video's kexts, the three that `VIDEO_SET` names, the same way
+//! (src/opencore/video.rs). Writes `$OUT_DIR/apv_arm64_port.rs` and `$OUT_DIR/video.rs`: each
+//! file of each bundle of the set, by its path under kext/, with its bytes, dotfiles left out.
+//! Nothing else in kext/ is read. With none of a set there, nothing of it is embedded; with only
+//! some, the build fails, as each set loads as one.
 //!
 //! The bundles are built without a path of the machine they were built on: the build fails when
 //! an embedded file holds `/Users/`, as an unstripped kext's debug map does.
@@ -11,6 +13,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 include!("src/opencore/apv_arm64_port_set.rs");
+include!("src/opencore/video_set.rs");
 
 fn main() {
     if let Err(e) = run() {
@@ -24,33 +27,53 @@ fn run() -> Result<(), String> {
     let dir = root.join("kext");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/opencore/apv_arm64_port_set.rs");
+    println!("cargo:rerun-if-changed=src/opencore/video_set.rs");
     println!("cargo:rerun-if-changed=kext");
+    let out = PathBuf::from(std::env::var("OUT_DIR").map_err(|e| e.to_string())?);
+    embed(
+        &dir,
+        &SET,
+        "apv-arm64-port",
+        "all seven",
+        &out.join("apv_arm64_port.rs"),
+    )?;
+    embed(
+        &dir,
+        &VIDEO_SET,
+        "video",
+        "all three",
+        &out.join("video.rs"),
+    )
+}
 
-    let present: Vec<&str> = SET
+/// Writes `to`, the files of the bundles `set` names in `dir`: all of them or none, `what` naming
+/// them in errors, and `whole` how many make the set.
+fn embed(dir: &Path, set: &[&str], what: &str, whole: &str, to: &Path) -> Result<(), String> {
+    let present: Vec<&str> = set
         .iter()
         .copied()
         .filter(|b| dir.join(b).exists())
         .collect();
-    if !present.is_empty() && present.len() != SET.len() {
-        let missing: Vec<&str> = SET
+    if !present.is_empty() && present.len() != set.len() {
+        let missing: Vec<&str> = set
             .iter()
             .copied()
             .filter(|b| !present.contains(b))
             .collect();
         return Err(format!(
-            "partial apv-arm64-port set in kext/, without {}: deploy all seven",
+            "partial {what} set in kext/, without {}: deploy {whole}",
             missing.join(", ")
         ));
     }
     let mut files = Vec::new();
     for b in &present {
-        walk(&dir, Path::new(b), &mut files)?;
+        walk(dir, Path::new(b), &mut files)?;
     }
     files.sort();
 
-    let mut code = String::from(
-        "/// Each file of the apv-arm64-port kexts, by its path under kext/ (build.rs).\n\
-         pub static FILES: &[(&str, &[u8])] = &[\n",
+    let mut code = format!(
+        "/// Each file of the {what} kexts, by its path under kext/ (build.rs).\n\
+         pub static FILES: &[(&str, &[u8])] = &[\n"
     );
     for f in &files {
         let path = dir.join(f);
@@ -68,9 +91,7 @@ fn run() -> Result<(), String> {
         let _ = writeln!(code, "    ({f:?}, include_bytes!({abs:?})),");
     }
     code.push_str("];\n");
-    let out = PathBuf::from(std::env::var("OUT_DIR").map_err(|e| e.to_string())?);
-    std::fs::write(out.join("apv_arm64_port.rs"), code)
-        .map_err(|e| format!("write apv_arm64_port.rs: {e}"))
+    std::fs::write(to, code).map_err(|e| format!("write {}: {e}", to.display()))
 }
 
 fn read_dir(dir: &Path) -> Result<Vec<std::fs::DirEntry>, String> {

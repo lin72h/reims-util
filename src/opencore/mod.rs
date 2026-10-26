@@ -1,14 +1,15 @@
 //! The OpenCore boot image: a 128 MiB GPT disk whose EFI system partition holds a pinned
 //! OpenCore release, the drivers and ACPI table a VM needs, the picker's icons and the boot chime
 //! from a pinned commit of OcBinaryData, a pinned Lilu release and its plugin ReimsVgpu.kext
-//! (kext/), the apv-arm64-port kexts (apv_arm64_port.rs), and a `config.plist` made for a q35 VM
-//! (config.rs) with an SMBIOS identity of its own (smbios.rs). OVMF goes beside it (ovmf.rs),
-//! where reims-ctl looks for it.
+//! (kext/), the apv-arm64-port kexts (apv_arm64_port.rs), reims-vgpu-video's kexts (video.rs),
+//! and a `config.plist` made for a q35 VM (config.rs) with an SMBIOS identity of its own
+//! (smbios.rs). OVMF goes beside it (ovmf.rs), where reims-ctl looks for it.
 
 pub mod acpi;
 pub mod apv_arm64_port;
 pub mod config;
 pub mod smbios;
+pub mod video;
 
 use crate::cache::{self, Pinned};
 use crate::image::{self, Data, Format};
@@ -62,6 +63,9 @@ pub struct Options {
     pub config: config::Options,
     /// The apv-arm64-port kexts too, when kext/ holds them; with `config.kexts` alone.
     pub apv_arm64_port: bool,
+    /// reims-vgpu-video's kexts too, when kext/ holds them; with the apv-arm64-port kexts alone,
+    /// whose IOSurface mapper they link against.
+    pub video: bool,
     /// Where OVMF's files go, or None to write none.
     pub ovmf_dir: Option<PathBuf>,
 }
@@ -74,6 +78,8 @@ pub struct Outputs {
     pub smbios: smbios::Smbios,
     /// Whether the image carries the apv-arm64-port kexts.
     pub apv_arm64_port: bool,
+    /// Whether the image carries reims-vgpu-video's kexts.
+    pub video: bool,
     pub ovmf: Option<crate::ovmf::Outputs>,
 }
 
@@ -87,6 +93,11 @@ pub fn build(o: &Options, r: &dyn Reporter) -> Result<Outputs> {
     } else {
         Vec::new()
     };
+    let video = if !port.is_empty() && o.video {
+        video::set(video::FILES)?
+    } else {
+        Vec::new()
+    };
     let lilu_path = if o.config.kexts {
         let p = cache::fetch(&LILU_RELEASE, r)?;
         progress::check(r)?;
@@ -95,12 +106,12 @@ pub fn build(o: &Options, r: &dyn Reporter) -> Result<Outputs> {
         None
     };
     r.step(&format!("Building the OpenCore {VERSION} image"));
-    let mut files = files(&zip_path, &o.config, &port)?;
+    let mut files = files(&zip_path, &o.config, &port, &video)?;
     files.extend(resources(&resources_path, o.config.graphical_picker)?);
     if let Some(p) = &lilu_path {
         files.extend(kexts(p)?);
     }
-    for k in &port {
+    for k in port.iter().chain(&video) {
         for (p, d) in &k.files {
             files.push((format!("EFI/OC/Kexts/{}/{p}", k.bundle), d.to_vec()));
         }
@@ -132,6 +143,7 @@ pub fn build(o: &Options, r: &dyn Reporter) -> Result<Outputs> {
         opencore: VERSION,
         smbios: o.config.smbios.clone(),
         apv_arm64_port: !port.is_empty(),
+        video: !video.is_empty(),
         ovmf,
     })
 }
@@ -141,6 +153,7 @@ fn files(
     zip_path: &Path,
     c: &config::Options,
     port: &[apv_arm64_port::Kext<'_>],
+    video: &[apv_arm64_port::Kext<'_>],
 ) -> Result<Vec<(String, Vec<u8>)>> {
     let f =
         std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
@@ -173,7 +186,7 @@ fn files(
     let sample = read("Docs/Sample.plist")?;
     files.push((
         "EFI/OC/config.plist".into(),
-        config::make(&sample, c, port)?,
+        config::make(&sample, c, port, video)?,
     ));
     files.push((
         format!("EFI/OC/ACPI/{}", acpi::FILE_NAME),

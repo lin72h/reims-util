@@ -14,8 +14,8 @@
 //! - on macOS 26, two kexts: Lilu, and its plugin ReimsVgpu (kext/), which has macOS's own driver
 //!   for reims-vgpu's GPU negotiate the interface version arm64 guests use, and patches what the
 //!   x86-64 driver and its Metal plugin hardcode; after them, the seven apv-arm64-port kexts
-//!   (apv_arm64_port.rs), on macOS 26.4 and later alone; no others, as QEMU's `isa-applesmc` is
-//!   the SMC;
+//!   (apv_arm64_port.rs), on macOS 26.4 and later alone; after those, reims-vgpu-video's three
+//!   (video.rs), on macOS 26.7 alone; no others, as QEMU's `isa-applesmc` is the SMC;
 //! - one ACPI table, the `EC` and `USBX` devices macOS looks for (acpi.rs);
 //! - CPUID leaf 1 reported as a Skylake-SP (family 6, model 85, stepping 4), a CPU every x86-64
 //!   macOS from 10.13 to 26 knows, whatever `-cpu` model the VM has;
@@ -72,6 +72,10 @@ const KEXT_MAX_KERNEL: &str = "25.99.99";
 /// The apv-arm64-port kexts load from macOS 26.4 on: on older builds, ReimsVgpu has macOS's own
 /// driver take the GPU. Where the set refuses at boot, it leaves the GPU to that driver too.
 const PORT_MIN_KERNEL: &str = "25.4.0";
+/// reims-vgpu-video's kexts load on macOS 26.7 (Darwin 25.6) alone, the release whose kernel
+/// collections their links were checked against (its docs/kext-port.md), within the
+/// apv-arm64-port kexts' bounds, as two of them link against its mapper.
+const VIDEO_MIN_KERNEL: &str = "25.6.0";
 
 /// Arguments for every boot: kernel symbols in panic logs, and no panics on a TLB shootdown or a
 /// timeout a vCPU took because the host descheduled it.
@@ -100,8 +104,13 @@ pub struct Options {
 }
 
 /// The config.plist for `o`, from the release's `sample`. With `o.kexts`, `port`
-/// (apv_arm64_port.rs) loads after Lilu and ReimsVgpu.
-pub fn make(sample: &[u8], o: &Options, port: &[PortKext<'_>]) -> Result<Vec<u8>> {
+/// (apv_arm64_port.rs) loads after Lilu and ReimsVgpu, and `video` (video.rs) after `port`.
+pub fn make(
+    sample: &[u8],
+    o: &Options,
+    port: &[PortKext<'_>],
+    video: &[PortKext<'_>],
+) -> Result<Vec<u8>> {
     let mut root: Value = plist::from_bytes(sample).context("read Sample.plist")?;
     let c = root
         .as_dictionary_mut()
@@ -146,7 +155,7 @@ pub fn make(sample: &[u8], o: &Options, port: &[PortKext<'_>]) -> Result<Vec<u8>
     )?;
 
     let kexts = if o.kexts {
-        kernel_add(&template(c, &["Kernel", "Add"])?, port)
+        kernel_add(&template(c, &["Kernel", "Add"])?, port, video)
     } else {
         Vec::new()
     };
@@ -312,8 +321,8 @@ pub fn make(sample: &[u8], o: &Options, port: &[PortKext<'_>]) -> Result<Vec<u8>
 }
 
 /// Kernel > Add's entries, made from the sample's first: Lilu and ReimsVgpu for macOS 26, then
-/// `port` for macOS 26.4 and later.
-fn kernel_add(template: &Dictionary, port: &[PortKext<'_>]) -> Vec<Value> {
+/// `port` for macOS 26.4 and later, then `video` for macOS 26.7.
+fn kernel_add(template: &Dictionary, port: &[PortKext<'_>], video: &[PortKext<'_>]) -> Vec<Value> {
     let mut add = vec![
         (
             LILU.bundle,
@@ -334,6 +343,14 @@ fn kernel_add(template: &Dictionary, port: &[PortKext<'_>]) -> Vec<Value> {
             k.executable.as_deref(),
             PORT_MIN_KERNEL,
             format!("apv-arm64-port's {}", k.bundle.trim_end_matches(".kext")),
+        ));
+    }
+    for k in video {
+        add.push((
+            k.bundle,
+            k.executable.as_deref(),
+            VIDEO_MIN_KERNEL,
+            format!("reims-vgpu-video's {}", k.bundle.trim_end_matches(".kext")),
         ));
     }
     add.into_iter()
@@ -402,6 +419,7 @@ fn unhex(s: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::opencore::apv_arm64_port as port;
+    use crate::opencore::video;
 
     fn fields(v: &Value, keys: &[&str]) -> Vec<String> {
         let d = v.as_dictionary().unwrap();
@@ -424,7 +442,7 @@ mod tests {
         ];
 
         // With none of the set in kext/, Lilu and ReimsVgpu alone.
-        let today = kernel_add(&template, &port::set(&[]).unwrap());
+        let today = kernel_add(&template, &port::set(&[]).unwrap(), &[]);
         let want = |b: &str, x: &str| {
             [b, x, KEXT_MIN_KERNEL, KEXT_MAX_KERNEL, "x86_64"].map(str::to_string)
         };
@@ -440,7 +458,7 @@ mod tests {
         // no path.
         let files = port::tests::fixture();
         let set = port::set(&port::tests::refs(&files)).unwrap();
-        let all = kernel_add(&template, &set);
+        let all = kernel_add(&template, &set, &[]);
         assert_eq!(all.len(), 9);
         assert_eq!(all[..2], today[..]);
         for (e, k) in all[2..].iter().zip(&set) {
@@ -452,5 +470,22 @@ mod tests {
             assert!(fields(e, &["Comment"])[0].starts_with("apv-arm64-port's "));
         }
         assert!(all.iter().any(|e| fields(e, &keys)[1].is_empty()));
+
+        // With reims-vgpu-video's kexts too, they follow the set in their order, from macOS 26.7.
+        let video_files = video::tests::fixture();
+        let video_set = video::set(&port::tests::refs(&video_files)).unwrap();
+        let with_video = kernel_add(&template, &set, &video_set);
+        assert_eq!(with_video.len(), 12);
+        assert_eq!(with_video[..9], all[..]);
+        for (e, k) in with_video[9..].iter().zip(&video_set) {
+            let f = fields(e, &keys);
+            assert_eq!(f[0], k.bundle);
+            assert_eq!(
+                f[1],
+                format!("Contents/MacOS/{}", k.bundle.trim_end_matches(".kext"))
+            );
+            assert_eq!(f[2..], [VIDEO_MIN_KERNEL, KEXT_MAX_KERNEL, "x86_64"]);
+            assert!(fields(e, &["Comment"])[0].starts_with("reims-vgpu-video's "));
+        }
     }
 }
